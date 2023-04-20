@@ -21,7 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"math/rand"
+	"net/http"
 	"time"
 
 	//	"bytes"
@@ -333,7 +335,8 @@ func init() {
    "encoderConfig": {
      "messageKey": "message",
      "levelKey": "level",
-     "levelEncoder": "lowercase"
+     "levelEncoder": "lowercase",
+     "callerKey":"C"
    }
  }`)
 	var cfg zap.Config
@@ -341,9 +344,21 @@ func init() {
 	if err = json.Unmarshal(rawJSON, &cfg); err != nil {
 		panic(err)
 	}
-	logger, err = cfg.Build()
+	cfg.EncoderConfig.CallerKey = "C"
+	cfg.EncoderConfig.TimeKey = "T"
+	cfg.EncoderConfig.LineEnding = zapcore.DefaultLineEnding
+	cfg.EncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
+	cfg.EncoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
+	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	logger, err = cfg.Build(zap.AddCaller())
 	if err != nil {
 		panic(err)
 	}
 	defer logger.Sync()
+	go func() {
+		if err := http.ListenAndServe("127.0.0.1:8080", nil); err != nil {
+			panic(err)
+		}
+	}()
 }
