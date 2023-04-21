@@ -2,6 +2,9 @@ package kvraft
 
 import (
 	"6824/labrpc"
+	"os"
+	"strconv"
+	"sync/atomic"
 	"time"
 )
 import "crypto/rand"
@@ -11,9 +14,15 @@ const (
 	PUT_APPEND_TIME_OUT = 150
 )
 
+var (
+	pid        string
+	requestNum int64
+)
+
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	LastServer int
 }
 
 func nrand() int64 {
@@ -27,6 +36,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.LastServer = -1
 	return ck
 }
 
@@ -44,9 +54,31 @@ func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
 	UUID := GetUUID()
-
+	if ck.LastServer != -1 {
+		server := ck.servers[ck.LastServer]
+		getArgs := &GetArgs{
+			Key:  key,
+			UUID: UUID,
+		}
+		getReply := &GetReply{}
+		ch := make(chan bool)
+		go func(getArgs *GetArgs, getReply *GetReply, ch chan bool) {
+			ok := server.Call("KVServer.Get", getArgs, getReply)
+			ch <- ok
+		}(getArgs, getReply, ch)
+		select {
+		case <-time.After(time.Duration(PUT_APPEND_TIME_OUT * time.Millisecond)):
+			go func(ch chan bool) {
+				<-ch
+			}(ch)
+		case ok := <-ch:
+			if !ok || getReply.Err != "" {
+			}
+			return getReply.Value
+		}
+	}
 	for {
-		for _, server := range ck.servers {
+		for i, server := range ck.servers {
 			getArgs := &GetArgs{
 				Key:  key,
 				UUID: UUID,
@@ -66,6 +98,7 @@ func (ck *Clerk) Get(key string) string {
 				if !ok || getReply.Err != "" {
 					continue
 				}
+				ck.LastServer = i
 				return getReply.Value
 			}
 		}
@@ -75,7 +108,8 @@ func (ck *Clerk) Get(key string) string {
 }
 
 func GetUUID() string {
-	return ""
+	atomic.AddInt64(&requestNum, 1)
+	return strconv.FormatInt(time.Now().Unix(), 10) + pid + strconv.FormatInt(requestNum, 10)
 }
 
 // shared by Put and Append.
@@ -89,9 +123,33 @@ func GetUUID() string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	UUID := GetUUID()
-
+	if ck.LastServer != -1 {
+		server := ck.servers[ck.LastServer]
+		putAppendArgs := &PutAppendArgs{
+			Key:   key,
+			Value: value,
+			Op:    op,
+			UUID:  UUID,
+		}
+		putAppendReply := &PutAppendReply{}
+		ch := make(chan bool)
+		go func(putAppendArgs *PutAppendArgs, putAppendReply *PutAppendReply, ch chan bool) {
+			ok := server.Call("KVServer.PutAppend", putAppendArgs, putAppendReply)
+			ch <- ok
+		}(putAppendArgs, putAppendReply, ch)
+		select {
+		case <-time.After(time.Duration(PUT_APPEND_TIME_OUT * time.Millisecond)):
+			go func(ch chan bool) {
+				<-ch
+			}(ch)
+		case ok := <-ch:
+			if !ok || putAppendReply.Err != "" {
+			}
+			return
+		}
+	}
 	for {
-		for _, server := range ck.servers {
+		for i, server := range ck.servers {
 			putAppendArgs := &PutAppendArgs{
 				Key:   key,
 				Value: value,
@@ -113,6 +171,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				if !ok || putAppendReply.Err != "" {
 					continue
 				}
+				ck.LastServer = i
 				return
 			}
 		}
@@ -124,4 +183,8 @@ func (ck *Clerk) Put(key string, value string) {
 }
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
+}
+
+func init() {
+	pid = strconv.Itoa(os.Getegid())
 }
