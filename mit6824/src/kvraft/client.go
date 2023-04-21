@@ -11,7 +11,7 @@ import "crypto/rand"
 import "math/big"
 
 const (
-	PUT_APPEND_TIME_OUT = 150
+	PUT_APPEND_TIME_OUT = 70
 )
 
 var (
@@ -54,6 +54,7 @@ func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
 	UUID := GetUUID()
+	logger.Infof("Send Get opt UUID is %v", UUID)
 	if ck.LastServer != -1 {
 		server := ck.servers[ck.LastServer]
 		getArgs := &GetArgs{
@@ -67,14 +68,14 @@ func (ck *Clerk) Get(key string) string {
 			ch <- ok
 		}(getArgs, getReply, ch)
 		select {
-		case <-time.After(time.Duration(PUT_APPEND_TIME_OUT * time.Millisecond)):
+		case <-time.After(PUT_APPEND_TIME_OUT * time.Millisecond):
 			go func(ch chan bool) {
 				<-ch
 			}(ch)
 		case ok := <-ch:
-			if !ok || getReply.Err != "" {
+			if ok && getReply.Err == "" {
+				return getReply.Value
 			}
-			return getReply.Value
 		}
 	}
 	for {
@@ -90,7 +91,7 @@ func (ck *Clerk) Get(key string) string {
 				ch <- ok
 			}(getArgs, getReply, ch)
 			select {
-			case <-time.After(time.Duration(PUT_APPEND_TIME_OUT * time.Millisecond)):
+			case <-time.After(PUT_APPEND_TIME_OUT * time.Millisecond):
 				go func(ch chan bool) {
 					<-ch
 				}(ch)
@@ -104,7 +105,6 @@ func (ck *Clerk) Get(key string) string {
 		}
 	}
 
-	return ""
 }
 
 func GetUUID() string {
@@ -123,6 +123,7 @@ func GetUUID() string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
 	UUID := GetUUID()
+	logger.Infof("Begin to send Put UUID is %v", UUID)
 	if ck.LastServer != -1 {
 		server := ck.servers[ck.LastServer]
 		putAppendArgs := &PutAppendArgs{
@@ -138,14 +139,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			ch <- ok
 		}(putAppendArgs, putAppendReply, ch)
 		select {
-		case <-time.After(time.Duration(PUT_APPEND_TIME_OUT * time.Millisecond)):
+		case <-time.After(PUT_APPEND_TIME_OUT * time.Millisecond):
 			go func(ch chan bool) {
 				<-ch
 			}(ch)
 		case ok := <-ch:
-			if !ok || putAppendReply.Err != "" {
+			if ok || putAppendReply.Err == "" {
+				return
 			}
-			return
 		}
 	}
 	for {

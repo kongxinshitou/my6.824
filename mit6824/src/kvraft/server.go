@@ -4,12 +4,23 @@ import (
 	"6824/labgob"
 	"6824/labrpc"
 	"6824/raft"
+	"encoding/json"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"log"
 	"sync"
 	"sync/atomic"
 )
 
 const Debug = false
+
+type MyLogger struct {
+	logger *zap.Logger
+}
+
+var (
+	logger MyLogger
+)
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -38,9 +49,12 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	Map        map[string]string
+	// real KV storage
+	Map map[string]string
+	// the result of request
 	requestRes map[string]string
-	isReady    map[string]chan struct{}
+	// notify
+	isReady map[string]chan struct{}
 	// TODO FIFO for a client asynchronously
 }
 
@@ -69,10 +83,13 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	op.MethodArg = []string{key}
 	op.OpUUID = uuid
 	command = EncodeOpt(op)
-	ch = make(chan struct{})
-	kv.isReady[uuid] = ch
+	kv.isReady[uuid] = make(chan struct{})
 	kv.mu.Unlock()
-	kv.rf.Start(command)
+	if _, _, ok := kv.rf.Start(command); !ok {
+		reply.Err = "not leader"
+		return
+	}
+	logger.Infof("KVServer %v try to start agreement on %v", kv.me, op)
 
 WaitForRes:
 	<-ch
@@ -114,6 +131,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = "not leader"
 		return
 	}
+	logger.Infof("KVServer %v try to start agreement on %v", kv.me, op)
 
 WaitForRes:
 	<-ch
@@ -169,7 +187,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.requestRes = map[string]string{}
 	kv.isReady = map[string]chan struct{}{}
 	// You may need initialization code here.
-
+	go kv.applier()
 	return kv
 }
 
@@ -180,10 +198,10 @@ func (kv *KVServer) processReq(op *Op) {
 	switch op.MethodType {
 	case "Get":
 		key := op.MethodArg[0]
-		if _, ok := kv.Map[key]; !ok {
+		if s, ok := kv.Map[key]; !ok {
 			res = ""
 		} else {
-			res = ""
+			res = s
 		}
 	case "Put":
 		key, value := op.MethodArg[0], op.MethodArg[1]
@@ -200,9 +218,10 @@ func (kv *KVServer) processReq(op *Op) {
 		}
 	}
 	kv.requestRes[uuid] = res
-	ch := kv.isReady[uuid]
-	close(ch)
-
+	if kv.isReady[uuid] != nil {
+		close(kv.isReady[uuid])
+	}
+	logger.Infof("KVServer %v execute op %v succeed res is %v", kv.me, op, res)
 }
 
 func (kv *KVServer) applier() {
@@ -212,10 +231,53 @@ func (kv *KVServer) applier() {
 			// TODO Snapshot
 		}
 		op := DecodeOpt(req.Command.([]byte))
+		logger.Infof("KVServer %v Get Op %v", kv.me, op)
 		if _, ok := kv.requestRes[op.OpUUID]; ok {
+			kv.mu.Unlock()
+			logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
 			continue
 		}
 		kv.processReq(op)
+
 		kv.mu.Unlock()
 	}
+}
+
+func init() {
+	rawJSON := []byte(`{
+   "level": "info",
+   "encoding": "console",
+   "outputPaths": ["stdout"],
+   "errorOutputPaths": ["stderr"],
+   "encoderConfig": {
+     "messageKey": "message",
+     "levelKey": "level",
+     "levelEncoder": "lowercase",
+     "callerKey":"C"
+   }
+ }`)
+	var cfg zap.Config
+	var err error
+	if err = json.Unmarshal(rawJSON, &cfg); err != nil {
+		panic(err)
+	}
+	cfg.EncoderConfig.CallerKey = "C"
+	cfg.EncoderConfig.TimeKey = "T"
+	cfg.EncoderConfig.LineEnding = zapcore.DefaultLineEnding
+	cfg.EncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
+	cfg.EncoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
+	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	zapLogger, err := cfg.Build(zap.AddCaller())
+	if err != nil {
+		panic(err)
+	}
+	defer zapLogger.Sync()
+	logger.logger = zapLogger
+	//go func() {
+	//	if err := http.ListenAndServe("127.0.0.1:8080", nil); err != nil {
+	//		panic(err)
+	//	}
+	//}()
+
 }
