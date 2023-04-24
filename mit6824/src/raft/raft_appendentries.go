@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	AppendEntriesTimeOut = 50
+	AppendEntriesTimeOut = 20
 )
 
 // example AppendEntries RPC arguments structure.
@@ -79,10 +79,15 @@ func (rf *Raft) GetCurrentN() int {
 func (rf *Raft) ServeAsLeader(server int, currentTerm int, stopChannel chan struct{}) {
 	//1.logic to set wait time
 	isHeartBeat := false
-
+	isSleep := true
 	for !rf.killed() {
 		isHeartBeat = false
-		time.Sleep(time.Duration(AppendEntriesTimeOut) * time.Millisecond)
+		if isSleep {
+			time.Sleep(time.Duration(AppendEntriesTimeOut) * time.Millisecond)
+		} else {
+			isSleep = true
+		}
+
 		//2.Check is valid
 		select {
 		case <-stopChannel:
@@ -141,11 +146,12 @@ func (rf *Raft) ServeAsLeader(server int, currentTerm int, stopChannel chan stru
 					ch <- ok
 				}(server, &args, &reply, ch)
 				select {
-				case <-time.After(150 * time.Millisecond):
+				case <-time.After(70 * time.Millisecond):
 					go func(ch chan bool) {
 						<-ch
 					}(ch)
 					logger.Info(fmt.Sprintf("learder %d in the term %d is sending appendEntries to %d, timeout", rf.me, rf.CurrentTerm, server))
+					isSleep = false
 					continue
 				case ok := <-ch:
 					if !ok {
@@ -227,10 +233,11 @@ func (rf *Raft) ServeAsLeader(server int, currentTerm int, stopChannel chan stru
 					ch <- ok
 				}(server, &args, &reply, ch)
 				select {
-				case <-time.After(100 * time.Millisecond):
+				case <-time.After(70 * time.Millisecond):
 					go func(ch chan bool) {
 						<-ch
 					}(ch)
+					isSleep = false
 					continue
 				case ok := <-ch:
 					if !ok {

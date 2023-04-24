@@ -56,6 +56,16 @@ func DecodeOpt(data []byte) *Op {
 	return op
 }
 
+func max(values ...int) int {
+	res := values[0]
+	for i := 1; i < len(values); i++ {
+		if values[i] > res {
+			res = values[i]
+		}
+	}
+	return res
+}
+
 func (logger MyLogger) Infof(format string, a ...any) {
 	logger.logger.Info(fmt.Sprintf(format, a...))
 }
@@ -65,6 +75,10 @@ func (logger MyLogger) Debugf(format string, a ...any) {
 }
 func (logger MyLogger) Errorf(format string, a ...any) {
 	logger.logger.Error(fmt.Sprintf(format, a...))
+}
+
+func (logger MyLogger) Errorln(a ...any) {
+	logger.logger.Error(fmt.Sprintln(a...))
 }
 
 func (logger MyLogger) Warnf(format string, a ...any) {

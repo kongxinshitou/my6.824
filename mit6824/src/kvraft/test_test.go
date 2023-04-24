@@ -290,6 +290,10 @@ func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliab
 					v := Get(cfg, myck, key, opLog, cli)
 					// the following check only makes sense when we're not using random keys
 					if !randomkeys && v != last {
+						for i := 0; i < len(cfg.kvservers); i++ {
+							logger.Errorln("server", i, cfg.kvservers[0].Map)
+						}
+
 						t.Fatalf("get wrong value, key %v, wanted:\n%v\n, got\n%v\n", key, last, v)
 					}
 				}
@@ -591,12 +595,10 @@ func TestPersistPartitionUnreliableLinearizable3A(t *testing.T) {
 	GenericTest(t, "3A", 15, 7, true, true, true, -1, true)
 }
 
-//
 // if one server falls behind, then rejoins, does it
 // recover by using the InstallSnapshot RPC?
 // also checks that majority discards committed log entries
 // even if minority doesn't respond.
-//
 func TestSnapshotRPC3B(t *testing.T) {
 	const nservers = 3
 	maxraftstate := 1000

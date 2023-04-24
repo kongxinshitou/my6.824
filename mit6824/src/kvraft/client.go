@@ -17,12 +17,14 @@ const (
 var (
 	pid        string
 	requestNum int64
+	clerkNum   int64
 )
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
 	LastServer int
+	clerkID    int64
 }
 
 func nrand() int64 {
@@ -51,10 +53,12 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-
 	// You will have to modify this function.
-	UUID := GetUUID()
-	logger.Infof("Send Get opt UUID is %v", UUID)
+	if ck.clerkID == 0 {
+		atomic.CompareAndSwapInt64(&ck.clerkID, 0, atomic.AddInt64(&clerkNum, 1))
+	}
+	UUID := ck.GetReqUUID()
+	logger.Infof("Send Get opt UUID is %v, key is %v", UUID, key)
 	if ck.LastServer != -1 {
 		server := ck.servers[ck.LastServer]
 		getArgs := &GetArgs{
@@ -74,6 +78,7 @@ func (ck *Clerk) Get(key string) string {
 			}(ch)
 		case ok := <-ch:
 			if ok && getReply.Err == "" {
+				logger.Infof("Op id is %v, Op is %v, key is %v, value is %v", UUID, "Get", key, getReply.Value)
 				return getReply.Value
 			}
 		}
@@ -100,16 +105,12 @@ func (ck *Clerk) Get(key string) string {
 					continue
 				}
 				ck.LastServer = i
+				logger.Infof("Op id is %v, Op is %v, key is %v, value is %v", UUID, "Get", key, getReply.Value)
 				return getReply.Value
 			}
 		}
 	}
 
-}
-
-func GetUUID() string {
-	atomic.AddInt64(&requestNum, 1)
-	return strconv.FormatInt(time.Now().Unix(), 10) + pid + strconv.FormatInt(requestNum, 10)
 }
 
 // shared by Put and Append.
@@ -120,10 +121,18 @@ func GetUUID() string {
 // the types of args and reply (including whether they are pointers)
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
+
+func (ck *Clerk) GetReqUUID() string {
+	return strconv.FormatInt(ck.clerkID, 10) + " " + strconv.FormatInt(atomic.AddInt64(&requestNum, 1), 10)
+}
+
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
-	UUID := GetUUID()
-	logger.Infof("Begin to send Put UUID is %v", UUID)
+	if ck.clerkID == 0 {
+		atomic.CompareAndSwapInt64(&ck.clerkID, 0, atomic.AddInt64(&clerkNum, 1))
+	}
+	UUID := ck.GetReqUUID()
+	logger.Infof("Begin to send Put UUID is %v, key is %v, value is %v", UUID, key, value)
 	if ck.LastServer != -1 {
 		server := ck.servers[ck.LastServer]
 		putAppendArgs := &PutAppendArgs{
@@ -144,7 +153,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				<-ch
 			}(ch)
 		case ok := <-ch:
-			if ok || putAppendReply.Err == "" {
+			if ok && putAppendReply.Err == "" {
+				logger.Infof("Op id is %v, Op is %v, key is %v, value is %v", UUID, op, key, value)
 				return
 			}
 		}
@@ -164,7 +174,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				ch <- ok
 			}(putAppendArgs, putAppendReply, ch)
 			select {
-			case <-time.After(time.Duration(PUT_APPEND_TIME_OUT * time.Millisecond)):
+			case <-time.After(PUT_APPEND_TIME_OUT * time.Millisecond):
 				go func(ch chan bool) {
 					<-ch
 				}(ch)
@@ -173,6 +183,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 					continue
 				}
 				ck.LastServer = i
+				logger.Infof("Op id is %v, Op is %v, key is %v, value is %v", UUID, op, key, value)
 				return
 			}
 		}

@@ -18,12 +18,13 @@ package raft
 //
 
 import (
+	"6824/labgob"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"math/rand"
-	"net/http"
 	"time"
 
 	//	"bytes"
@@ -133,6 +134,31 @@ func (rf *Raft) GetState() (int, bool) {
 	term = rf.CurrentTerm
 	isLeader = rf.ServerState == 2
 	return term, isLeader
+}
+func (rf *Raft) GetStateSize() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return len(rf.persister.raftstate)
+}
+
+func (rf *Raft) GetSnapshot(index int) ([]byte, error) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if index <= rf.LastIncludedIndex {
+		return nil, fmt.Errorf("can't snapshot")
+	}
+	olderSnapshot := rf.persister.ReadSnapshot()
+	r := bytes.NewBuffer(olderSnapshot)
+	var messages []ApplyMsg
+	d := labgob.NewDecoder(r)
+	d.Decode(&messages)
+	for i := 0; i < index-rf.LastIncludedIndex; i++ {
+		messages = append(messages, rf.Logs[i].Message)
+	}
+	b := new(bytes.Buffer)
+	en := labgob.NewEncoder(b)
+	en.Encode(messages)
+	return b.Bytes(), nil
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -300,6 +326,7 @@ func (rf *Raft) ticker() {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+	labgob.Register(ApplyMsg{})
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
@@ -356,9 +383,4 @@ func init() {
 		panic(err)
 	}
 	defer logger.Sync()
-	go func() {
-		if err := http.ListenAndServe("127.0.0.1:8080", nil); err != nil {
-			panic(err)
-		}
-	}()
 }

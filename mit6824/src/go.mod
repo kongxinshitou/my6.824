@@ -1,6 +1,6 @@
 module 6824
 
-go 1.17
+go 1.18
 
 require go.uber.org/zap v1.24.0
 

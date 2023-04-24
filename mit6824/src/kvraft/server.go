@@ -4,9 +4,8 @@ import (
 	"6824/labgob"
 	"6824/labrpc"
 	"6824/raft"
-	"encoding/json"
+	"bytes"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -53,9 +52,15 @@ type KVServer struct {
 	Map map[string]string
 	// the result of request
 	requestRes map[string]string
+
+	maxClientReq map[int]int
+
 	// notify
 	isReady map[string]chan struct{}
-	// TODO FIFO for a client asynchronously
+	// could be optimized
+	lastApplyIndex int
+	lastExecutedID int
+	// 3B
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -89,6 +94,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = "not leader"
 		return
 	}
+
 	logger.Infof("KVServer %v try to start agreement on %v", kv.me, op)
 
 WaitForRes:
@@ -135,8 +141,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 WaitForRes:
 	<-ch
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 	return
 }
 
@@ -224,60 +228,74 @@ func (kv *KVServer) processReq(op *Op) {
 	logger.Infof("KVServer %v execute op %v succeed res is %v", kv.me, op, res)
 }
 
-func (kv *KVServer) applier() {
-	for req := range kv.applyCh {
-		kv.mu.Lock()
-		if req.SnapshotValid {
-			// TODO Snapshot
-		}
-		op := DecodeOpt(req.Command.([]byte))
-		logger.Infof("KVServer %v Get Op %v", kv.me, op)
-		if _, ok := kv.requestRes[op.OpUUID]; ok {
-			kv.mu.Unlock()
-			logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
-			continue
-		}
-		kv.processReq(op)
+func (kv *KVServer) snapshot(index int) {
 
-		kv.mu.Unlock()
+	l := kv.rf.GetStateSize()
+	if l <= kv.maxraftstate {
+		return
 	}
+	snapshot, err := kv.rf.GetSnapshot(index)
+	if err != nil {
+		return
+	}
+	kv.rf.Snapshot(index, snapshot)
+	logger.Warnf("server %v snapshot succeed", kv.me)
 }
 
-func init() {
-	rawJSON := []byte(`{
-   "level": "info",
-   "encoding": "console",
-   "outputPaths": ["stdout"],
-   "errorOutputPaths": ["stderr"],
-   "encoderConfig": {
-     "messageKey": "message",
-     "levelKey": "level",
-     "levelEncoder": "lowercase",
-     "callerKey":"C"
-   }
- }`)
-	var cfg zap.Config
-	var err error
-	if err = json.Unmarshal(rawJSON, &cfg); err != nil {
-		panic(err)
-	}
-	cfg.EncoderConfig.CallerKey = "C"
-	cfg.EncoderConfig.TimeKey = "T"
-	cfg.EncoderConfig.LineEnding = zapcore.DefaultLineEnding
-	cfg.EncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
-	cfg.EncoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
-	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
-	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	zapLogger, err := cfg.Build(zap.AddCaller())
-	if err != nil {
-		panic(err)
-	}
-	defer zapLogger.Sync()
-	logger.logger = zapLogger
-	//go func() {
-	//	if err := http.ListenAndServe("127.0.0.1:8080", nil); err != nil {
-	//		panic(err)
-	//	}
-	//}()
+func (kv *KVServer) applier() {
+	for req := range kv.applyCh {
+		var reqType string
+		if req.SnapshotValid {
+			reqType = "snapshot"
+		} else if req.CommandValid {
+			reqType = "command"
+		}
 
+		switch reqType {
+		case "command":
+			kv.mu.Lock()
+			op := DecodeOpt(req.Command.([]byte))
+			//strs := strings.Split(op.OpUUID, " ")
+			//opClient, _ := strconv.Atoi(strs[0])
+			//opUUID, _ := strconv.Atoi(strs[1])
+			//logger.Infof("KVServer %v Get Op %v", kv.me, op)
+			//if opUUID < kv.maxClientReq[opClient] {
+			//	kv.mu.Unlock()
+			//	continue
+			//}
+			if _, ok := kv.requestRes[op.OpUUID]; ok {
+				kv.mu.Unlock()
+				logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
+				continue
+			}
+			kv.processReq(op)
+			if kv.maxraftstate != -1 {
+				go kv.snapshot(req.CommandIndex)
+			}
+			kv.lastApplyIndex = max(kv.lastApplyIndex, req.CommandIndex)
+			kv.mu.Unlock()
+		case "snapshot":
+			kv.mu.Lock()
+			var messages []raft.ApplyMsg
+			r := bytes.NewBuffer(req.Snapshot)
+			de := labgob.NewDecoder(r)
+			de.Decode(&messages)
+			lastIndex := messages[len(messages)-1].CommandIndex
+			if lastIndex <= kv.lastApplyIndex {
+				kv.mu.Unlock()
+				break
+			}
+			for i := len(messages) - (lastIndex - kv.lastApplyIndex); i < len(messages); i++ {
+				op := DecodeOpt(messages[i].Command.([]byte))
+				if _, ok := kv.requestRes[op.OpUUID]; ok {
+					logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
+					continue
+				}
+				kv.processReq(op)
+			}
+			kv.lastApplyIndex = lastIndex
+			kv.mu.Unlock()
+		}
+
+	}
 }
