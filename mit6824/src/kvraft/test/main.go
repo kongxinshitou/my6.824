@@ -3,8 +3,12 @@ package main
 import "fmt"
 
 func main() {
-	l := map[int]chan int{}
-	k := l[0]
-	fmt.Println(k)
-
+	var l int
+	var ok bool
+	k := map[int]int{0: 100}
+	if l, ok = k[0]; ok {
+		goto PP
+	}
+PP:
+	fmt.Println(l)
 }

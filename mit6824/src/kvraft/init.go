@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"net/http"
 	_ "net/http/pprof"
 )
 
@@ -39,10 +38,10 @@ func init() {
 	}
 	defer zapLogger.Sync()
 	logger.logger = zapLogger
-	go func() {
-		if err := http.ListenAndServe(":9999", nil); err != nil {
-			panic(err)
-		}
-	}()
+	//go func() {
+	//	if err := http.ListenAndServe(":9999", nil); err != nil {
+	//		panic(err)
+	//	}
+	//}()
 
 }

@@ -71,7 +71,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	var ch chan struct{}
-	var ok bool
 	var op Op
 	var command []byte
 	kv.mu.Lock()
@@ -80,15 +79,16 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		defer kv.mu.Unlock()
 		return
 	}
-	if ch, ok = kv.isReady[uuid]; ok {
-		kv.mu.Unlock()
-		goto WaitForRes
-	}
 	op.MethodType = "Get"
 	op.MethodArg = []string{key}
 	op.OpUUID = uuid
 	command = EncodeOpt(op)
-	kv.isReady[uuid] = make(chan struct{})
+	if _, ok := kv.isReady[uuid]; !ok {
+		ch = make(chan struct{})
+		kv.isReady[uuid] = ch
+	} else {
+		ch = kv.isReady[uuid]
+	}
 	kv.mu.Unlock()
 	if _, _, ok := kv.rf.Start(command); !ok {
 		reply.Err = "not leader"
@@ -97,7 +97,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	logger.Infof("KVServer %v try to start agreement on %v", kv.me, op)
 
-WaitForRes:
 	<-ch
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -114,7 +113,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	var ch chan struct{}
-	var ok bool
 	var op Op
 	var command []byte
 	kv.mu.Lock()
@@ -122,16 +120,16 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		defer kv.mu.Unlock()
 		return
 	}
-	if ch, ok = kv.isReady[uuid]; ok {
-		kv.mu.Unlock()
-		goto WaitForRes
-	}
 	op.MethodType = opt
 	op.MethodArg = []string{key, value}
 	op.OpUUID = uuid
 	command = EncodeOpt(op)
-	ch = make(chan struct{})
-	kv.isReady[uuid] = ch
+	if _, ok := kv.isReady[uuid]; !ok {
+		ch = make(chan struct{})
+		kv.isReady[uuid] = ch
+	} else {
+		ch = kv.isReady[uuid]
+	}
 	kv.mu.Unlock()
 	if _, _, ok := kv.rf.Start(command); !ok {
 		reply.Err = "not leader"
@@ -139,7 +137,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	logger.Infof("KVServer %v try to start agreement on %v", kv.me, op)
 
-WaitForRes:
 	<-ch
 	return
 }
@@ -266,7 +263,7 @@ func (kv *KVServer) applier() {
 			if _, ok := kv.requestRes[op.OpUUID]; ok {
 				kv.mu.Unlock()
 				logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
-				continue
+				break
 			}
 			kv.processReq(op)
 			if kv.maxraftstate != -1 {
