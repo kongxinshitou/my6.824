@@ -4,7 +4,6 @@ import (
 	"6824/labgob"
 	"6824/labrpc"
 	"6824/raft"
-	"bytes"
 	"go.uber.org/zap"
 	"log"
 	"sync"
@@ -52,15 +51,11 @@ type KVServer struct {
 	Map map[string]string
 	// the result of request
 	requestRes map[string]string
-
-	maxClientReq map[int]int
-
+	History    map[int]int
 	// notify
 	isReady map[string]chan struct{}
 	// could be optimized
 	lastApplyIndex int
-	lastExecutedID int
-	// 3B
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -73,9 +68,16 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	var ch chan struct{}
 	var op Op
 	var command []byte
+	var lastOpID int
+	clientId, clientOPID := SplitUUID(uuid)
 	kv.mu.Lock()
-	if res, ok := kv.requestRes[uuid]; ok {
-		reply.Value = res
+	lastOpID = kv.History[clientId]
+	if clientOPID < lastOpID {
+		defer kv.mu.Unlock()
+		return
+	}
+	if clientOPID == lastOpID {
+		reply.Value = kv.requestRes[uuid]
 		defer kv.mu.Unlock()
 		return
 	}
@@ -100,7 +102,12 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	<-ch
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	reply.Value = kv.requestRes[uuid]
+	// Don't worry about the situation that can't get a reply, there always exist latest history
+	if value, ok := kv.requestRes[uuid]; ok {
+		reply.Value = value
+	} else {
+		reply.Err = "no record, turn to others"
+	}
 	return
 }
 
@@ -115,8 +122,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	var ch chan struct{}
 	var op Op
 	var command []byte
+	var lastOpID int
+	clientId, clientOPID := SplitUUID(uuid)
 	kv.mu.Lock()
-	if _, ok := kv.requestRes[uuid]; ok {
+	lastOpID = kv.History[clientId]
+	// meaningless req
+	if clientOPID <= lastOpID {
 		defer kv.mu.Unlock()
 		return
 	}
@@ -187,58 +198,14 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.Map = map[string]string{}
 	kv.requestRes = map[string]string{}
 	kv.isReady = map[string]chan struct{}{}
+	kv.History = map[int]int{}
+	kv.processSnapshot(kv.rf.GetSnapshot())
 	// You may need initialization code here.
 	go kv.applier()
 	return kv
 }
 
-func (kv *KVServer) processReq(op *Op) {
-
-	uuid := op.OpUUID
-	var res string
-	switch op.MethodType {
-	case "Get":
-		key := op.MethodArg[0]
-		if s, ok := kv.Map[key]; !ok {
-			res = ""
-		} else {
-			res = s
-		}
-	case "Put":
-		key, value := op.MethodArg[0], op.MethodArg[1]
-		kv.Map[key] = value
-		res = value
-	case "Append":
-		key, value := op.MethodArg[0], op.MethodArg[1]
-		if s, ok := kv.Map[key]; ok {
-			kv.Map[key] = s + value
-			res = s + value
-		} else {
-			kv.Map[key] = value
-			res = value
-		}
-	}
-	kv.requestRes[uuid] = res
-	if kv.isReady[uuid] != nil {
-		close(kv.isReady[uuid])
-	}
-	logger.Infof("KVServer %v execute op %v succeed res is %v", kv.me, op, res)
-}
-
-func (kv *KVServer) snapshot(index int) {
-
-	l := kv.rf.GetStateSize()
-	if l <= kv.maxraftstate {
-		return
-	}
-	snapshot, err := kv.rf.GetSnapshot(index)
-	if err != nil {
-		return
-	}
-	kv.rf.Snapshot(index, snapshot)
-	logger.Warnf("server %v snapshot succeed", kv.me)
-}
-
+// The request from a client is arrived in order
 func (kv *KVServer) applier() {
 	for req := range kv.applyCh {
 		var reqType string
@@ -252,47 +219,49 @@ func (kv *KVServer) applier() {
 		case "command":
 			kv.mu.Lock()
 			op := DecodeOpt(req.Command.([]byte))
-			//strs := strings.Split(op.OpUUID, " ")
-			//opClient, _ := strconv.Atoi(strs[0])
-			//opUUID, _ := strconv.Atoi(strs[1])
-			//logger.Infof("KVServer %v Get Op %v", kv.me, op)
-			//if opUUID < kv.maxClientReq[opClient] {
-			//	kv.mu.Unlock()
-			//	continue
-			//}
-			if _, ok := kv.requestRes[op.OpUUID]; ok {
+			opClient, opUUID := SplitUUID(op.OpUUID)
+			hisID := kv.History[opClient]
+			if opUUID <= hisID {
 				kv.mu.Unlock()
-				logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
-				break
+				continue
 			}
+			logger.Infof("KVServer %v Get Op %v", kv.me, op)
 			kv.processReq(op)
-			if kv.maxraftstate != -1 {
-				go kv.snapshot(req.CommandIndex)
-			}
 			kv.lastApplyIndex = max(kv.lastApplyIndex, req.CommandIndex)
+			logger.Infof("server %v, lastApplyIndex is %v", kv.me, kv.lastApplyIndex)
+			kv.History[opClient] = opUUID
+			if kv.maxraftstate != -1 && kv.rf.GetStateSize() > int64(kv.maxraftstate) {
+				snapshot := kv.getSnapshot()
+				logger.Infof("get the server %v state, the map is %v, the histRes is %v", kv.me, kv.Map, kv.History)
+				kv.rf.Snapshot(kv.lastApplyIndex, snapshot)
+			}
 			kv.mu.Unlock()
 		case "snapshot":
+			logger.Debugf("server %v get snapshot message", kv.me)
 			kv.mu.Lock()
-			var messages []raft.ApplyMsg
-			r := bytes.NewBuffer(req.Snapshot)
-			de := labgob.NewDecoder(r)
-			de.Decode(&messages)
-			lastIndex := messages[len(messages)-1].CommandIndex
-			if lastIndex <= kv.lastApplyIndex {
+			snapshot := req.Snapshot
+			if req.SnapshotIndex <= kv.lastApplyIndex {
 				kv.mu.Unlock()
-				break
+				continue
 			}
-			for i := len(messages) - (lastIndex - kv.lastApplyIndex); i < len(messages); i++ {
-				op := DecodeOpt(messages[i].Command.([]byte))
-				if _, ok := kv.requestRes[op.OpUUID]; ok {
-					logger.Infof("Op %v has been executed by KVServer %v", op, kv.me)
-					continue
-				}
-				kv.processReq(op)
-			}
-			kv.lastApplyIndex = lastIndex
+			logger.Debugf("before snapshot the server %v state, the map is %v, the histRes is %v", kv.me, kv.Map, kv.History)
+			kv.processSnapshot(snapshot)
+			logger.Debugf("after snapshot the server %v state, the map is %v, the histRes is %v", kv.me, kv.Map, kv.History)
+			kv.lastApplyIndex = req.SnapshotIndex
 			kv.mu.Unlock()
 		}
 
 	}
+}
+
+func (kv *KVServer) CleanCh() {
+	newIsReady := map[string]chan struct{}{}
+	for k, v := range kv.isReady {
+		if isClosed(v) {
+			continue
+		}
+		newIsReady[k] = v
+	}
+	kv.isReady = newIsReady
+	return
 }

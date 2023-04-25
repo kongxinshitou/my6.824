@@ -19,7 +19,6 @@ package raft
 
 import (
 	"6824/labgob"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"go.uber.org/zap"
@@ -110,6 +109,7 @@ type Raft struct {
 	Logs              []LogEntry
 	LastIncludedIndex int
 	LastIncludedTerm  int
+	stateSize         int64
 	// The volatile state on the servers
 	CommitIndex int
 	LastApplied int
@@ -135,30 +135,14 @@ func (rf *Raft) GetState() (int, bool) {
 	isLeader = rf.ServerState == 2
 	return term, isLeader
 }
-func (rf *Raft) GetStateSize() int {
+func (rf *Raft) GetSnapshot() []byte {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return len(rf.persister.raftstate)
+	return rf.persister.snapshot
 }
 
-func (rf *Raft) GetSnapshot(index int) ([]byte, error) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if index <= rf.LastIncludedIndex {
-		return nil, fmt.Errorf("can't snapshot")
-	}
-	olderSnapshot := rf.persister.ReadSnapshot()
-	r := bytes.NewBuffer(olderSnapshot)
-	var messages []ApplyMsg
-	d := labgob.NewDecoder(r)
-	d.Decode(&messages)
-	for i := 0; i < index-rf.LastIncludedIndex; i++ {
-		messages = append(messages, rf.Logs[i].Message)
-	}
-	b := new(bytes.Buffer)
-	en := labgob.NewEncoder(b)
-	en.Encode(messages)
-	return b.Bytes(), nil
+func (rf *Raft) GetStateSize() int64 {
+	return atomic.LoadInt64(&rf.stateSize)
 }
 
 // example code to send a RequestVote RPC to a server.

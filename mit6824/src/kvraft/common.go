@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"fmt"
 	"go.uber.org/zap/buffer"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -30,15 +32,15 @@ type PutAppendReply struct {
 	Err Err
 }
 
+type GetReply struct {
+	Err   Err
+	Value string
+}
+
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
 	UUID string
-}
-
-type GetReply struct {
-	Err   Err
-	Value string
 }
 
 func EncodeOpt(op Op) []byte {
@@ -83,4 +85,38 @@ func (logger MyLogger) Errorln(a ...any) {
 
 func (logger MyLogger) Warnf(format string, a ...any) {
 	logger.logger.Warn(fmt.Sprintf(format, a...))
+}
+
+func CombineUUID(client, op int) string {
+	return strconv.Itoa(client) + " " + strconv.Itoa(op)
+}
+
+func SplitUUID(uuid string) (int, int) {
+	strs := strings.Split(uuid, " ")
+	clientId, _ := strconv.Atoi(strs[0])
+	clientOPID, _ := strconv.Atoi(strs[1])
+	return clientId, clientOPID
+}
+func CloseCh(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case <-ch:
+		return
+	default:
+		close(ch)
+	}
+}
+
+func isClosed(ch chan struct{}) bool {
+	if ch == nil {
+		return true
+	}
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }

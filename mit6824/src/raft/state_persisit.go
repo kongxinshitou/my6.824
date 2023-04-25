@@ -26,6 +26,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.LastIncludedIndex)
 	e.Encode(rf.LastIncludedTerm)
 	data := w.Bytes()
+	rf.stateSize = int64(len(data))
 	rf.persister.SaveRaftState(data)
 }
 
