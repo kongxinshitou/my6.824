@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	AppendEntriesTimeOut = 33
+	AppendEntriesTimeOut = 10
 )
 
 // example AppendEntries RPC arguments structure.
@@ -106,6 +106,7 @@ func (rf *Raft) ServeAsLeader(server int, currentTerm int, stopChannel chan stru
 			if rf.NextIndex[server] > rf.LastIncludedIndex {
 				if len(rf.Logs)+rf.LastIncludedIndex < rf.NextIndex[server] {
 					isHeartBeat = true
+					time.Sleep(3 * time.Duration(AppendEntriesTimeOut) * time.Millisecond)
 				}
 				args := AppendEntriesArgs{
 					Term:         rf.CurrentTerm,
