@@ -26,15 +26,14 @@ func (kv *KVServer) getMapState() string {
 func (kv *KVServer) setHisState(state string) {
 	hiss := strings.Split(state, ",")
 	kv.History = map[int]int{}
-	kv.requestRes = map[string]string{}
+	kv.requestRes = map[int]string{}
 	for _, his := range hiss {
 		strs := strings.Split(his, ":")
 		client, _ := strconv.Atoi(strs[0])
 		lastOpID, _ := strconv.Atoi(strs[1])
 		res := strs[2]
-		uuid := strs[0] + " " + strs[1]
 		kv.History[client] = lastOpID
-		kv.requestRes[uuid] = res
+		kv.requestRes[client] = res
 	}
 }
 
@@ -50,8 +49,7 @@ func (kv *KVServer) closeRegisterCh() {
 func (kv *KVServer) getHisState() string {
 	state := []string{}
 	for client, lastOPID := range kv.History {
-		uuid := CombineUUID(client, lastOPID)
-		res := kv.requestRes[uuid]
+		res := kv.requestRes[client]
 		state = append(state, strconv.Itoa(client)+":"+strconv.Itoa(lastOPID)+":"+res)
 	}
 	return strings.Join(state, ",")

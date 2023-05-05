@@ -4,21 +4,12 @@ import (
 	"6824/labgob"
 	"6824/labrpc"
 	"6824/raft"
-	"go.uber.org/zap"
 	"log"
 	"sync"
 	"sync/atomic"
 )
 
 const Debug = false
-
-type MyLogger struct {
-	logger *zap.Logger
-}
-
-var (
-	logger MyLogger
-)
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -49,8 +40,9 @@ type KVServer struct {
 	// Your definitions here.
 	// real KV storage
 	Map map[string]string
-	// the result of request
-	requestRes map[string]string
+	// the result of all request
+	// can be optimized
+	requestRes map[int]string
 	History    map[int]int
 	// notify
 	isReady map[string]chan struct{}
@@ -77,7 +69,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	if clientOPID == lastOpID {
-		reply.Value = kv.requestRes[uuid]
+		reply.Value = kv.requestRes[clientId]
 		defer kv.mu.Unlock()
 		return
 	}
@@ -103,7 +95,11 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	// Don't worry about the situation that can't get a reply, there always exist latest history
-	if value, ok := kv.requestRes[uuid]; ok {
+	if kv.History[clientId] > clientId {
+		reply.Err = "meaningless"
+		return
+	}
+	if value, ok := kv.requestRes[clientId]; ok {
 		reply.Value = value
 	} else {
 		reply.Err = "no record, turn to others"
@@ -196,7 +192,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.Map = map[string]string{}
-	kv.requestRes = map[string]string{}
+	kv.requestRes = map[int]string{}
 	kv.isReady = map[string]chan struct{}{}
 	kv.History = map[int]int{}
 	kv.processSnapshot(kv.rf.GetSnapshot())
@@ -229,7 +225,6 @@ func (kv *KVServer) applier() {
 			kv.processReq(op)
 			kv.lastApplyIndex = max(kv.lastApplyIndex, req.CommandIndex)
 			logger.Infof("server %v, lastApplyIndex is %v", kv.me, kv.lastApplyIndex)
-			kv.History[opClient] = opUUID
 			if kv.maxraftstate != -1 && kv.rf.GetStateSize() > int64(kv.maxraftstate) {
 				snapshot := kv.getSnapshot()
 				logger.Infof("get the server %v state, the map is %v, the histRes is %v", kv.me, kv.Map, kv.History)

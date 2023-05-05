@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	AppendEntriesTimeOut = 20
+	AppendEntriesTimeOut = 33
 )
 
 // example AppendEntries RPC arguments structure.

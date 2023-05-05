@@ -15,9 +15,9 @@ const (
 )
 
 var (
-	pid        string
-	requestNum int64
-	clerkNum   int64
+	pid string
+
+	clerkNum int64
 )
 
 type Clerk struct {
@@ -25,6 +25,7 @@ type Clerk struct {
 	// You will have to modify this struct.
 	LastServer int
 	clerkID    int64
+	requestNum int64
 }
 
 func nrand() int64 {
@@ -123,7 +124,7 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 
 func (ck *Clerk) GetReqUUID() string {
-	return strconv.FormatInt(ck.clerkID, 10) + " " + strconv.FormatInt(atomic.AddInt64(&requestNum, 1), 10)
+	return strconv.FormatInt(ck.clerkID, 10) + " " + strconv.FormatInt(atomic.AddInt64(&ck.requestNum, 1), 10)
 }
 
 func (ck *Clerk) PutAppend(key string, value string, op string) {

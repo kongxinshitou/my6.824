@@ -1,9 +1,10 @@
-package kvraft
+package shardctrler
 
 import (
 	"encoding/json"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"net/http"
 	_ "net/http/pprof"
 )
 
@@ -17,7 +18,7 @@ var (
 
 func init() {
 	rawJSON := []byte(`{
-   "level": "error",
+   "level": "info",
    "encoding": "console",
    "outputPaths": ["stdout"],
    "errorOutputPaths": ["stderr"],
@@ -46,10 +47,10 @@ func init() {
 	}
 	defer zapLogger.Sync()
 	logger.logger = zapLogger
-	//go func() {
-	//	if err := http.ListenAndServe(":9999", nil); err != nil {
-	//		panic(err)
-	//	}
-	//}()
+	go func() {
+		if err := http.ListenAndServe(":9999", nil); err != nil {
+			panic(err)
+		}
+	}()
 
 }

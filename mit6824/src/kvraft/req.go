@@ -1,8 +1,8 @@
 package kvraft
 
 func (kv *KVServer) processReq(op *Op) {
-
 	uuid := op.OpUUID
+	client, opID := SplitUUID(uuid)
 	var res string
 	switch op.MethodType {
 	case "Get":
@@ -26,7 +26,8 @@ func (kv *KVServer) processReq(op *Op) {
 			res = value
 		}
 	}
-	kv.requestRes[uuid] = res
+	kv.requestRes[client] = res
+	kv.History[client] = opID
 	if kv.isReady[uuid] != nil {
 		close(kv.isReady[uuid])
 	}
