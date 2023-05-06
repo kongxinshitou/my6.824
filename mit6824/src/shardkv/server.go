@@ -1,6 +1,8 @@
 package shardkv
 
-import "6824/labrpc"
+import (
+	"6824/labrpc"
+)
 import "6824/raft"
 import "sync"
 import "6824/labgob"
@@ -89,3 +91,4 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	return kv
 }
+
