@@ -55,7 +55,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 
 func (ck *Clerk) Get(key string) string {
-	You will have to modify this function.
+	//You will have to modify this function.
 	if ck.clerkID == 0 {
 		atomic.CompareAndSwapInt64(&ck.clerkID, 0, atomic.AddInt64(&clerkNum, 1))
 	}
@@ -112,9 +112,8 @@ func (ck *Clerk) Get(key string) string {
 			}
 		}
 	}
+
 }
-
-
 
 // shared by Put and Append.
 //

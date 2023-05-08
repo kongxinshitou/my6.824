@@ -2,6 +2,9 @@ package kvraft
 
 import (
 	"6824/kvraft"
+	"6824/labgob"
+	"bytes"
+	"go.uber.org/zap/buffer"
 	"strconv"
 	"strings"
 )
@@ -87,4 +90,24 @@ func NewDefaultKVServer() *KVServer {
 	kv.History = map[int]int{}
 	kv.IsReady = map[string]chan struct{}{}
 	return &kv
+}
+
+type Op struct {
+	A int
+	M map[string]string
+}
+
+func EncodeOpt(op Op) []byte {
+	w := new(buffer.Buffer)
+	en := labgob.NewEncoder(w)
+	en.Encode(op)
+	return w.Bytes()
+}
+
+func DecodeOpt(data []byte) *Op {
+	op := &Op{}
+	w := bytes.NewBuffer(data)
+	decode := labgob.NewDecoder(w)
+	decode.Decode(op)
+	return op
 }

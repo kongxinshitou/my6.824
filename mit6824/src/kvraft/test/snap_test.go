@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"6824/labgob"
 	"fmt"
 	"testing"
 	"time"
@@ -44,4 +45,11 @@ func TestDO(t *testing.T) {
 func TestDefault(t *testing.T) {
 	var a bool
 	fmt.Println(a)
+}
+
+func TestEncode(t *testing.T) {
+	labgob.Register(Op{})
+	o := Op{A: 1, M: map[string]string{"1": "1"}}
+	EncodeOpt(o)
+	fmt.Println(o)
 }

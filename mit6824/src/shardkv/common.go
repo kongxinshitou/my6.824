@@ -1,5 +1,14 @@
 package shardkv
 
+import (
+	"6824/labgob"
+	"6824/shardctrler"
+	"bytes"
+	"go.uber.org/zap/buffer"
+	"strconv"
+	"strings"
+)
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -33,6 +42,16 @@ type PutAppendReply struct {
 	Err Err
 }
 
+type MigrateArgs struct {
+	Snapshot  []byte
+	ConfigNum int
+	ShardID   int
+}
+
+type MigrateReply struct {
+	Err Err
+}
+
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
@@ -41,4 +60,76 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+type ShardMap struct {
+	ShardNum   int
+	Map        map[string]string
+	RequestRes map[int]string
+	History    map[int]int
+	// notify
+	IsReady   map[string]chan struct{}
+	ConfigNum int
+}
+
+func NewShardMap(shardNum int) *ShardMap {
+	s := &ShardMap{}
+	s.ShardNum = shardNum
+	s.Map = make(map[string]string)
+	s.RequestRes = make(map[int]string)
+	s.History = make(map[int]int)
+	s.IsReady = make(map[string]chan struct{})
+	return s
+}
+
+func SplitUUID(uuid string) (int, int) {
+	strs := strings.Split(uuid, " ")
+	clientId, _ := strconv.Atoi(strs[0])
+	clientOPID, _ := strconv.Atoi(strs[1])
+	return clientId, clientOPID
+}
+
+func EncodeOpt(op Op) []byte {
+	w := new(buffer.Buffer)
+	en := labgob.NewEncoder(w)
+	en.Encode(op)
+	return w.Bytes()
+}
+
+func DecodeOpt(data []byte) *Op {
+	op := &Op{}
+	w := bytes.NewBuffer(data)
+	decode := labgob.NewDecoder(w)
+	decode.Decode(op)
+	return op
+}
+
+func EncodeConfig(op shardctrler.Config) []byte {
+	w := new(buffer.Buffer)
+	en := labgob.NewEncoder(w)
+	en.Encode(op)
+	return w.Bytes()
+}
+
+func DecodeConfig(data []byte) *shardctrler.Config {
+	op := &shardctrler.Config{}
+	w := bytes.NewBuffer(data)
+	decode := labgob.NewDecoder(w)
+	decode.Decode(op)
+	return op
+}
+
+func EncodeShardMap(op ShardMap) []byte {
+	w := new(buffer.Buffer)
+	en := labgob.NewEncoder(w)
+	en.Encode(op)
+	return w.Bytes()
+}
+
+func DecodeShardMap(data []byte) *ShardMap {
+	op := &ShardMap{}
+	w := bytes.NewBuffer(data)
+	decode := labgob.NewDecoder(w)
+	decode.Decode(op)
+	return op
 }

@@ -2,6 +2,9 @@ package shardkv
 
 import (
 	"6824/labrpc"
+	"6824/shardctrler"
+	"sync/atomic"
+	"time"
 )
 import "6824/raft"
 import "sync"
@@ -11,19 +14,29 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	OpType string
+	OpArg  any
+	OpUUID string
 }
 
 type ShardKV struct {
-	mu           sync.Mutex
-	me           int
-	rf           *raft.Raft
-	applyCh      chan raft.ApplyMsg
-	make_end     func(string) *labrpc.ClientEnd
-	gid          int
-	ctrlers      []*labrpc.ClientEnd
-	maxraftstate int // snapshot if log grows this big
-
+	mu               sync.Mutex
+	me               int
+	rf               *raft.Raft
+	applyCh          chan raft.ApplyMsg
+	make_end         func(string) *labrpc.ClientEnd
+	gid              int
+	ctrlers          []*labrpc.ClientEnd
+	maxraftstate     int // snapshot if log grows this big
+	shardsMap        map[int]*ShardMap
+	expectConfig     int64
+	currentConfigNum int64
+	currentConfig    shardctrler.Config
 	// Your definitions here.
+}
+
+func (kv *ShardKV) MigrateDate(args *MigrateArgs, reply *MigrateReply) {
+
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -34,13 +47,35 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 }
 
+func (kv *ShardKV) CheckConfig() {
+	args := &shardctrler.QueryArgs{}
+	args.Num = -1
+L1:
+	for {
+		time.Sleep(time.Millisecond * 100)
+		for {
+			for _, srv := range kv.ctrlers {
+				reply := &shardctrler.QueryReply{}
+				ok := srv.Call("ShardCtrler.Query", args, reply)
+				if ok && reply.WrongLeader == false {
+					if int64(reply.Config.Num) > atomic.LoadInt64(&kv.currentConfigNum) && reply.Config.Num != 0 {
+						command := EncodeConfig(reply.Config)
+						kv.rf.Start(command)
+					}
+					continue L1
+				}
+			}
+		}
+	}
+}
+
 // the tester calls Kill() when a ShardKV instance won't
 // be needed again. you are not required to do anything
 // in Kill(), but it might be convenient to (for example)
 // turn off debug output from this instance.
 func (kv *ShardKV) Kill() {
 	kv.rf.Kill()
-	// Your code here, if desired.
+
 }
 
 // servers[] contains the ports of the servers in this group.
@@ -73,7 +108,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
-
+	labgob.Register(ShardMap{})
+	labgob.Register(shardctrler.Config{})
 	kv := new(ShardKV)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
@@ -92,3 +128,35 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	return kv
 }
 
+func (kv *ShardKV) applier() {
+	for req := range kv.applyCh {
+		var reqType string
+		if req.SnapshotValid {
+			reqType = "snapshot"
+		} else if req.CommandValid {
+			reqType = "command"
+		}
+
+		switch reqType {
+		case "command":
+			op := DecodeOpt(req.Command.([]byte))
+			switch op.OpType {
+			case "Get":
+				kv.processKVCommand(op)
+			case "Put":
+				kv.processKVCommand(op)
+			case "Append":
+				kv.processKVCommand(op)
+			case "DataMigration":
+				kv.processDataMigration(op)
+			case "Config":
+				kv.processConfig(op)
+			}
+
+		case "snapshot":
+			kv.processSnapshot(req.Snapshot)
+
+		}
+
+	}
+}
