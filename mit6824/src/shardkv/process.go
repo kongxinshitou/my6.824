@@ -10,6 +10,7 @@ func (kv *ShardKV) initShardMapByConfig(config shardctrler.Config) {
 			kv.shardsMap[i] = NewShardMap(i)
 		}
 	}
+
 }
 
 func (kv *ShardKV) processKVCommand(op *Op) {
@@ -28,10 +29,7 @@ func (kv *ShardKV) processConfig(op *Op) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	config := op.OpArg.(shardctrler.Config)
-	if kv.expectConfig > int64(config.Num) {
-		return
-	}
-	kv.expectConfig = int64(config.Num)
+
 	if kv.currentConfigNum == 0 {
 		kv.initShardMapByConfig(config)
 		return

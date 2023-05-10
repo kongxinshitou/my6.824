@@ -42,16 +42,6 @@ type PutAppendReply struct {
 	Err Err
 }
 
-type MigrateArgs struct {
-	Snapshot  []byte
-	ConfigNum int
-	ShardID   int
-}
-
-type MigrateReply struct {
-	Err Err
-}
-
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
@@ -62,14 +52,36 @@ type GetReply struct {
 	Value string
 }
 
+type ConfigCommands struct {
+	Commands []ConfigCommand
+}
+
+type PutMigrationDataArgs struct {
+	Commands []DataMigrateCommand
+	GId      int
+}
+
+type PutMigrationDataReply struct {
+	Err Err
+}
+
+type DataMigrateCommand struct {
+	Data      ShardMap
+	ConfigNum int
+}
+
+type ConfigCommand struct {
+	Shard   int
+	Command string
+	Num     int
+}
+
 type ShardMap struct {
 	ShardNum   int
 	Map        map[string]string
 	RequestRes map[int]string
 	History    map[int]int
-	// notify
-	IsReady   map[string]chan struct{}
-	ConfigNum int
+	ConfigNum  int
 }
 
 func NewShardMap(shardNum int) *ShardMap {
@@ -78,7 +90,6 @@ func NewShardMap(shardNum int) *ShardMap {
 	s.Map = make(map[string]string)
 	s.RequestRes = make(map[int]string)
 	s.History = make(map[int]int)
-	s.IsReady = make(map[string]chan struct{})
 	return s
 }
 
