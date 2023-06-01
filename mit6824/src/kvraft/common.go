@@ -3,7 +3,6 @@ package kvraft
 import (
 	"6824/labgob"
 	"bytes"
-	"fmt"
 	"go.uber.org/zap/buffer"
 	"strconv"
 	"strings"
@@ -66,25 +65,6 @@ func max(values ...int) int {
 		}
 	}
 	return res
-}
-
-func (logger MyLogger) Infof(format string, a ...any) {
-	logger.logger.Info(fmt.Sprintf(format, a...))
-}
-
-func (logger MyLogger) Debugf(format string, a ...any) {
-	logger.logger.Debug(fmt.Sprintf(format, a...))
-}
-func (logger MyLogger) Errorf(format string, a ...any) {
-	logger.logger.Error(fmt.Sprintf(format, a...))
-}
-
-func (logger MyLogger) Errorln(a ...any) {
-	logger.logger.Error(fmt.Sprintln(a...))
-}
-
-func (logger MyLogger) Warnf(format string, a ...any) {
-	logger.logger.Warn(fmt.Sprintf(format, a...))
 }
 
 func CombineUUID(client, op int) string {

@@ -42,6 +42,15 @@ type PutAppendReply struct {
 	Err Err
 }
 
+type BeginTransactionArgs struct {
+	UUID string
+}
+
+type BeginTransactionReply struct {
+	ErrorCode int64
+	Err       Err
+}
+
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
@@ -52,6 +61,16 @@ type GetReply struct {
 	Value string
 }
 
+type ConfigChangeReply struct {
+	ErrorCode int64
+	Err       Err
+}
+
+type ConfigChangeArgs struct {
+	Commands ConfigCommands
+	UUID     string
+}
+
 type ConfigCommands struct {
 	Commands []ConfigCommand
 }
@@ -59,10 +78,13 @@ type ConfigCommands struct {
 type PutMigrationDataArgs struct {
 	Commands []DataMigrateCommand
 	GId      int
+	Servers  []string
+	OpUUID   string
 }
 
 type PutMigrationDataReply struct {
-	Err Err
+	ErrorCode int64
+	Err       Err
 }
 
 type DataMigrateCommand struct {
@@ -77,25 +99,22 @@ type ConfigCommand struct {
 }
 
 type ShardMap struct {
-	ShardNum   int
-	Map        map[string]string
-	RequestRes map[int]string
-	History    map[int]int
-	ConfigNum  int
+	ShardNum int
+	Map      map[string]string
+
+	ConfigNum int
 }
 
 func NewShardMap(shardNum int) *ShardMap {
 	s := &ShardMap{}
 	s.ShardNum = shardNum
 	s.Map = make(map[string]string)
-	s.RequestRes = make(map[int]string)
-	s.History = make(map[int]int)
 	return s
 }
 
-func SplitUUID(uuid string) (int, int) {
+func SplitUUID(uuid string) (string, int) {
 	strs := strings.Split(uuid, " ")
-	clientId, _ := strconv.Atoi(strs[0])
+	clientId := strs[0]
 	clientOPID, _ := strconv.Atoi(strs[1])
 	return clientId, clientOPID
 }
@@ -143,4 +162,18 @@ func DecodeShardMap(data []byte) *ShardMap {
 	decode := labgob.NewDecoder(w)
 	decode.Decode(op)
 	return op
+}
+
+func init() {
+	labgob.Register(ConfigCommands{})
+	labgob.Register(PutAppendArgs{})
+	labgob.Register(PutAppendReply{})
+	labgob.Register(GetArgs{})
+	labgob.Register(GetReply{})
+	labgob.Register(PutMigrationDataArgs{})
+	labgob.Register(PutMigrationDataReply{})
+	labgob.Register(DataMigrateCommand{})
+	labgob.Register(ConfigCommand{})
+	labgob.Register(ShardMap{})
+	labgob.Register(shardctrler.Config{})
 }

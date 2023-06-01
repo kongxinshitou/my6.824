@@ -162,13 +162,9 @@ func (logger MyLogger) Warnf(format string, a ...any) {
 	logger.logger.Warn(fmt.Sprintf(format, a...))
 }
 
-func CombineUUID(client, op int) string {
-	return strconv.Itoa(client) + " " + strconv.Itoa(op)
-}
-
-func SplitUUID(uuid string) (int, int) {
+func SplitUUID(uuid string) (string, int) {
 	strs := strings.Split(uuid, " ")
-	clientId, _ := strconv.Atoi(strs[0])
+	clientId := strs[0]
 	clientOPID, _ := strconv.Atoi(strs[1])
 	return clientId, clientOPID
 }

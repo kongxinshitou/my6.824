@@ -8,7 +8,7 @@ import (
 )
 
 type MyLogger struct {
-	logger *zap.Logger
+	*zap.SugaredLogger
 }
 
 var (
@@ -45,7 +45,7 @@ func init() {
 		panic(err)
 	}
 	defer zapLogger.Sync()
-	logger.logger = zapLogger
+	logger = MyLogger{zapLogger.Sugar()}
 	//go func() {
 	//	if err := http.ListenAndServe(":9999", nil); err != nil {
 	//		panic(err)

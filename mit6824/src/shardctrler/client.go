@@ -131,5 +131,5 @@ func (ck *Clerk) Move(shard int, gid int) {
 }
 
 func (ck *Clerk) GetReqUUID() string {
-	return strconv.FormatInt(ck.clerkID, 10) + " " + strconv.FormatInt(atomic.AddInt64(&ck.requestNum, 1), 10)
+	return "K" + strconv.FormatInt(ck.clerkID, 10) + " " + strconv.FormatInt(atomic.AddInt64(&ck.requestNum, 1), 10)
 }

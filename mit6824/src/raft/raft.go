@@ -135,6 +135,13 @@ func (rf *Raft) GetState() (int, bool) {
 	isLeader = rf.ServerState == 2
 	return term, isLeader
 }
+
+func (rf *Raft) IsLeader() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.ServerState == 2
+}
+
 func (rf *Raft) GetSnapshot() []byte {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()

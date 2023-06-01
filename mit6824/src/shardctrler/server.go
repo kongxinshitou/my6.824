@@ -13,8 +13,8 @@ type ShardCtrler struct {
 
 	// Your data here.
 	configs    []Config // indexed by config num
-	requestRes map[int]interface{}
-	History    map[int]int
+	requestRes map[string]interface{}
+	History    map[string]int
 	// notify
 	isReady        map[string]chan struct{}
 	lastApplyIndex int
@@ -254,8 +254,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 	// Your code here.
-	sc.History = map[int]int{}
-	sc.requestRes = map[int]interface{}{}
+	sc.History = map[string]int{}
+	sc.requestRes = map[string]interface{}{}
 	sc.isReady = map[string]chan struct{}{}
 	logger.Infof("Start server")
 	go sc.applier()

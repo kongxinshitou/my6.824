@@ -3,13 +3,19 @@ package shardkv
 import (
 	"6824/labrpc"
 	"6824/shardctrler"
-	"math/rand"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
 import "6824/raft"
 import "sync"
 import "6824/labgob"
+
+const (
+	REQUESTTIMEOUT       = time.Duration(200)
+	REFRESHCONFIGTIMEOUT = time.Duration(100)
+	REFRESHCONFIGRANDOM  = 80
+)
 
 var (
 	ServerNum int64
@@ -36,15 +42,15 @@ type ShardKV struct {
 	shardsMap    map[int]*ShardMap
 	expectConfig int64
 	configNum    int64
+	RequestRes   map[string]string
+	History      map[string]int
 	IsReady      map[string]chan struct{}
-	CommandId    int64
 	// Your definitions here.
-	isToSend        int64
-	shardsConfigNum [shardctrler.NShards]int64
-}
-
-func (kv *ShardKV) MigrateDate(args *PutMigrationDataArgs, reply *PutMigrationDataReply) {
-
+	IsConfigChanging int64
+	shardsConfigNum  [shardctrler.NShards]int64
+	peers            []*labrpc.ClientEnd
+	CommandId        int64
+	ServerId         int64
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -55,97 +61,40 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 }
 
-func (kv *ShardKV) InitConfig() {
-
-}
-
-func (kv *ShardKV) sendMigrationData(args *PutMigrationDataArgs, reply *PutMigrationDataReply) {
-
-}
-
-func (kv *ShardKV) CheckConfig() {
-	args := &shardctrler.QueryArgs{}
-	args.Num = -1
+func (kv *ShardKV) findPeers() {
+	i := 1
 
 	for {
-		time.Sleep(time.Millisecond * (70 + time.Duration(rand.Intn(60))))
-		if atomic.LoadInt64(&kv.isToSend) != 0 || !kv.rf.IsLeader() {
-			continue
-		}
+		args := &shardctrler.QueryArgs{}
+		args.Num = i
+		args.UUID = kv.getUUID()
+	L1:
+		for {
+			for _, srv := range kv.ctrlers {
+				reply := &shardctrler.QueryReply{}
+				ok := srv.Call("ShardCtrler.Query", args, reply)
+				if args.Num == 1 {
+					
+				}
 
-		for _, srv := range kv.ctrlers {
-			reply := &shardctrler.QueryReply{}
-			ok := srv.Call("ShardCtrler.Query", args, reply)
-			if !ok || reply.WrongLeader == true {
-				continue
-			}
-			atomic.CompareAndSwapInt64(&kv.isToSend, 0, 1)
-			defer func() {
-				atomic.CompareAndSwapInt64(&kv.isToSend, 1, 0)
-			}()
-			kv.mu.Lock()
-			defer func() {
-				kv.isToSend = 0
-			}()
-			op := Op{}
-			NewConfigNum := reply.Config.Num
-			var command []byte
-			confCommands := ConfigCommands{}
-			deleteShards := map[int][]int{}
-			for shard, gid := range reply.Config.Shards {
-				var s *ShardMap
-				var ok bool
-				if s, ok = kv.shardsMap[shard]; !ok {
-					continue
-				}
-				if kv.gid == gid && s.ShardNum < NewConfigNum {
-					c := ConfigCommand{}
-					c.Shard = shard
-					c.Command = "update"
-					c.Num = NewConfigNum
-					confCommands.Commands = append(confCommands.Commands, c)
-				}
-				if kv.gid != gid {
-					deleteShards[gid] = append(deleteShards[gid], shard)
-				}
-			}
-			if len(confCommands.Commands) == 0 {
-				kv.mu.Unlock()
-				break
-			}
-			wg := sync.WaitGroup{}
-			for gid := range deleteShards {
-				args := &PutMigrationDataArgs{}
-				reply := &PutMigrationDataReply{}
-				args.GId = gid
-				for _, shard := range deleteShards[gid] {
-					c := DataMigrateCommand{}
-					c.Data = *kv.shardsMap[shard]
-					c.ConfigNum = NewConfigNum
-					args.Commands = append(args.Commands, c)
-				}
-				wg.Add(1)
-				go func(args *PutMigrationDataArgs, reply *PutMigrationDataReply) {
-					defer wg.Done()
-					kv.sendMigrationData(args, reply)
-					if reply.Err == "" {
-						for _, command := range args.Commands {
-							c := ConfigCommand{}
-							c.Shard = command.Data.ShardNum
-							c.Command = "delete"
-							confCommands.Commands = append(confCommands.Commands, c)
+				if ok && !reply.WrongLeader && reply.Err == "" {
+					for gid := range reply.Config.Groups {
+						if gid == kv.gid {
+							kv.mu.Lock()
+							defer kv.mu.Unlock()
+							for _, serverName := range reply.Config.Groups[gid] {
+								kv.peers = append(kv.peers, kv.make_end(serverName))
+							}
+							return
 						}
 					}
-				}(args, reply)
+					i += 1
+					break L1
+				}
 			}
-			wg.Wait()
-			kv.mu.Unlock()
-			if len(command) != 0 {
-				kv.rf.Start(command)
-			}
-			break
 		}
 	}
+
 }
 
 // the tester calls Kill() when a ShardKV instance won't
@@ -191,20 +140,27 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(shardctrler.Config{})
 	kv := new(ShardKV)
 	kv.me = me
-	kv.maxraftstate = maxraftstate
+	kv.maxraftstate = int64(maxraftstate)
 	kv.make_end = make_end
 	kv.gid = gid
 	kv.ctrlers = ctrlers
 
 	// Your initialization code here.
-
+	kv.ServerId = atomic.AddInt64(&ServerNum, 1)
 	// Use something like this to talk to the shardctrler:
 	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	go kv.findPeers()
 	return kv
+}
+
+func (kv *ShardKV) getConfigChangeUUID() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+func (kv *ShardKV) getUUID() string {
+	return "s" + strconv.Itoa(int(kv.ServerId)) + " " + strconv.Itoa(int(atomic.AddInt64(&kv.CommandId, 1)))
 }
 
 func (kv *ShardKV) applier() {

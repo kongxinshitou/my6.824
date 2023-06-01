@@ -8,11 +8,19 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "6824/labrpc"
+import (
+	"6824/labrpc"
+	"strconv"
+	"sync/atomic"
+)
 import "crypto/rand"
 import "math/big"
 import "6824/shardctrler"
 import "time"
+
+var (
+	ClientID int64
+)
 
 // which shard is a key in?
 // please use this function,
@@ -38,6 +46,8 @@ type Clerk struct {
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
 	// You will have to modify this struct.
+	ClientID  int64
+	CommandID int64
 }
 
 // the tester calls MakeClerk.
@@ -52,6 +62,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	// You'll have to add code here.
+	ck.ClientID = atomic.AddInt64(&ck.ClientID, 1)
 	return ck
 }
 
@@ -125,4 +136,8 @@ func (ck *Clerk) Put(key string, value string) {
 }
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
+}
+
+func (ck *Clerk) GetUUID() string {
+	return "C" + strconv.FormatInt(ck.ClientID, 10) + " " + strconv.FormatInt(atomic.AddInt64(&ck.CommandID, 1), 10)
 }
