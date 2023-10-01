@@ -56,13 +56,15 @@ type Clerk struct {
 //
 // make_end(servername) turns a server name from a
 // Config.Groups[gid][i] into a labrpc.ClientEnd on which you can
+
 // send RPCs.
 func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *Clerk {
+
 	ck := new(Clerk)
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	// You'll have to add code here.
-	ck.ClientID = atomic.AddInt64(&ck.ClientID, 1)
+	ck.ClientID = atomic.AddInt64(&ClientID, 1)
 	return ck
 }
 
@@ -71,22 +73,29 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // keeps trying forever in the face of all other errors.
 // You will have to modify this function.
 func (ck *Clerk) Get(key string) string {
+
 	args := GetArgs{}
 	args.Key = key
+	args.UUID = ck.GetUUID()
 
+	// 1.ErrWrongLeader continue
+	// 2.ErrWrongGroup  break
+	// 3.ErrorTimeout break
 	for {
 		shard := key2shard(key)
+		args.ShardID = shard
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply GetReply
+
 				ok := srv.Call("ShardKV.Get", &args, &reply)
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+				if ok && reply.Err == OK {
 					return reply.Value
 				}
-				if ok && (reply.Err == ErrWrongGroup) {
+				if ok && (reply.Err == ErrWrongGroup || reply.Err == ErrTimeout) {
 					break
 				}
 				// ... not ok, or ErrWrongLeader
@@ -103,13 +112,18 @@ func (ck *Clerk) Get(key string) string {
 // shared by Put and Append.
 // You will have to modify this function.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
+
 	args := PutAppendArgs{}
 	args.Key = key
 	args.Value = value
 	args.Op = op
-
+	args.UUID = ck.GetUUID()
+	// 1.ErrWrongLeader continue
+	// 2.ErrWrongGroup  break
+	// 3.ErrorTimeout break
 	for {
 		shard := key2shard(key)
+		args.ShardID = shard
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {
@@ -119,7 +133,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				if ok && reply.Err == OK {
 					return
 				}
-				if ok && reply.Err == ErrWrongGroup {
+				if ok && (reply.Err == ErrWrongGroup || reply.Err == ErrTimeout) {
 					break
 				}
 				// ... not ok, or ErrWrongLeader

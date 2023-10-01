@@ -3,7 +3,6 @@ package shardkv
 import (
 	"6824/labgob"
 	"6824/shardctrler"
-	"bytes"
 	"go.uber.org/zap/buffer"
 	"strconv"
 	"strings"
@@ -19,97 +18,168 @@ import (
 //
 
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
+	Serving = iota
+	Pulling
+	BePulling
+	GCing
 )
 
-type Err string
+var (
+	OK             = "OK"
+	ErrOutOfDate   = "config out of date"
+	ErrWrongLeader = "error wrong leader"
+	ErrTimeout     = "error timeout"
+	ErrWait        = "error wait"
+	ErrWrongGroup  = "error wrong group"
+)
 
-// Put or Append
+type ClientReq struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	OpType string
+	OpArg  any
+}
+
+func max(nums ...int) int {
+	res := nums[0]
+	for i := 0; i < len(nums); i++ {
+		if nums[i] > res {
+			res = nums[i]
+		}
+	}
+
+	return res
+}
+func DeepCopyMapStringString(s map[string]string) map[string]string {
+	if s == nil {
+		return nil
+	}
+
+	res := map[string]string{}
+	for k, v := range s {
+		res[k] = v
+	}
+
+	return res
+}
+
+func DeepCopyStringInt(m map[string]int) map[string]int {
+	if m == nil {
+		return nil
+	}
+
+	res := map[string]int{}
+	for k, v := range m {
+		res[k] = v
+	}
+
+	return res
+
+}
+
+type Shard struct {
+	Data  map[string]string
+	State int
+}
+
+func (s *Shard) deepCopy() *Shard {
+	res := &Shard{}
+	res.Data = DeepCopyMapStringString(s.Data)
+	res.State = s.State
+
+	return res
+}
+
+func NewShard() *Shard {
+	return &Shard{
+		Data:  map[string]string{},
+		State: Serving,
+	}
+}
+
 type PutAppendArgs struct {
-	// You'll have to add definitions here.
 	Key   string
 	Value string
 	Op    string // "Put" or "Append"
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	UUID    string
+	ShardID int
 }
 
 type PutAppendReply struct {
-	Err Err
+	Err string
 }
 
-type BeginTransactionArgs struct {
-	UUID string
-}
-
-type BeginTransactionReply struct {
-	ErrorCode int64
-	Err       Err
+type GetReply struct {
+	Err   string
+	Value string
 }
 
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+	UUID    string
+	ShardID int
 }
 
-type GetReply struct {
-	Err   Err
-	Value string
+type UpdateConfigArg struct {
+	Config shardctrler.Config
 }
 
-type ConfigChangeReply struct {
-	ErrorCode int64
-	Err       Err
+type UpdateConfigReply struct {
+	Err string
 }
 
-type ConfigChangeArgs struct {
-	Commands ConfigCommands
-	UUID     string
-}
-
-type ConfigCommands struct {
-	Commands []ConfigCommand
-}
-
-type PutMigrationDataArgs struct {
-	Commands []DataMigrateCommand
-	GId      int
-	Servers  []string
-	OpUUID   string
-}
-
-type PutMigrationDataReply struct {
-	ErrorCode int64
-	Err       Err
-}
-
-type DataMigrateCommand struct {
-	Data      ShardMap
+type GetShardArg struct {
+	ShardIDs  []int
 	ConfigNum int
 }
 
-type ConfigCommand struct {
-	Shard   int
-	Command string
-	Num     int
+type GetShardReply struct {
+	Success    bool
+	ConfigNum  int
+	ShardIDs   []int
+	Shards     map[int]*Shard
+	RequestRes map[string]string
+	History    map[string]int
+	Err        string
 }
 
-type ShardMap struct {
-	ShardNum int
-	Map      map[string]string
+func GetAddShardByGetShardReply(reply *GetShardReply) *AddShardArg {
+	args := &AddShardArg{}
+	args.ConfigNum = reply.ConfigNum
+	args.Shards = reply.Shards
+	args.History = reply.History
+	args.RequestRes = reply.RequestRes
+	args.ShardIDs = reply.ShardIDs
 
+	return args
+}
+
+type AddShardArg struct {
+	ConfigNum  int
+	ShardIDs   []int
+	Shards     map[int]*Shard
+	RequestRes map[string]string
+	History    map[string]int
+}
+
+type AddShardReply struct {
+	Success bool
+	Err     string
+}
+
+type DeleteShardArg struct {
 	ConfigNum int
+	ShardIDs  []int
 }
 
-func NewShardMap(shardNum int) *ShardMap {
-	s := &ShardMap{}
-	s.ShardNum = shardNum
-	s.Map = make(map[string]string)
-	return s
+type DeleteShardReply struct {
+	Success bool
+	Err     string
 }
 
 func SplitUUID(uuid string) (string, int) {
@@ -119,61 +189,72 @@ func SplitUUID(uuid string) (string, int) {
 	return clientId, clientOPID
 }
 
-func EncodeOpt(op Op) []byte {
+func EncodeAny(args interface{}) []byte {
 	w := new(buffer.Buffer)
 	en := labgob.NewEncoder(w)
-	en.Encode(op)
+	en.Encode(args)
 	return w.Bytes()
 }
 
-func DecodeOpt(data []byte) *Op {
-	op := &Op{}
-	w := bytes.NewBuffer(data)
-	decode := labgob.NewDecoder(w)
-	decode.Decode(op)
-	return op
-}
-
-func EncodeConfig(op shardctrler.Config) []byte {
+func EncodeClientReq(req ClientReq) []byte {
 	w := new(buffer.Buffer)
 	en := labgob.NewEncoder(w)
-	en.Encode(op)
+	en.Encode(req)
 	return w.Bytes()
 }
 
-func DecodeConfig(data []byte) *shardctrler.Config {
-	op := &shardctrler.Config{}
-	w := bytes.NewBuffer(data)
-	decode := labgob.NewDecoder(w)
-	decode.Decode(op)
-	return op
+func DecodeGetArgs(op *ClientReq) *GetArgs {
+	arg := op.OpArg.(GetArgs)
+	return &arg
 }
 
-func EncodeShardMap(op ShardMap) []byte {
-	w := new(buffer.Buffer)
-	en := labgob.NewEncoder(w)
-	en.Encode(op)
-	return w.Bytes()
+func DecodePutAppendArgs(op *ClientReq) *PutAppendArgs {
+	arg := op.OpArg.(PutAppendArgs)
+	return &arg
 }
 
-func DecodeShardMap(data []byte) *ShardMap {
-	op := &ShardMap{}
-	w := bytes.NewBuffer(data)
-	decode := labgob.NewDecoder(w)
-	decode.Decode(op)
-	return op
+func DecodeAddShardArg(op *ClientReq) *AddShardArg {
+	arg := op.OpArg.(AddShardArg)
+	return &arg
+}
+
+func DecodeUpdateConfigArg(op *ClientReq) *UpdateConfigArg {
+	arg := op.OpArg.(UpdateConfigArg)
+	return &arg
+}
+
+func DecodeDeleteShardArg(op *ClientReq) *DeleteShardArg {
+	arg := op.OpArg.(DeleteShardArg)
+	return &arg
+}
+
+func CloseCh(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case <-ch:
+		return
+	default:
+		close(ch)
+	}
 }
 
 func init() {
-	labgob.Register(ConfigCommands{})
+	labgob.Register(AddShardArg{})
+	labgob.Register(AddShardReply{})
 	labgob.Register(PutAppendArgs{})
 	labgob.Register(PutAppendReply{})
 	labgob.Register(GetArgs{})
 	labgob.Register(GetReply{})
-	labgob.Register(PutMigrationDataArgs{})
-	labgob.Register(PutMigrationDataReply{})
-	labgob.Register(DataMigrateCommand{})
-	labgob.Register(ConfigCommand{})
-	labgob.Register(ShardMap{})
+	labgob.Register(ClientReq{})
+	labgob.Register(UpdateConfigArg{})
+	labgob.Register(UpdateConfigReply{})
+	labgob.Register(DeleteShardArg{})
+	labgob.Register(DeleteShardReply{})
+	labgob.Register(Shard{})
+	labgob.Register(map[string]*Shard{})
+	labgob.Register(map[string]string{})
+	labgob.Register(map[string]int{})
 	labgob.Register(shardctrler.Config{})
 }
